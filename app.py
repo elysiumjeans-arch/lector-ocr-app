@@ -3,10 +3,16 @@ from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
 import io
 import base64
+import os
 
 # RUTA A TESSERACT INSTALADO EN TU PC
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
+if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
+    # Si la ruta de Windows existe, la usamos
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+else:
+    # En la nube (Linux), Tesseract se instala en el PATH automáticamente,
+    # así que no necesitamos asignar una ruta manual.
+    pass
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="OCR Inteligente Pro", layout="wide")
 
