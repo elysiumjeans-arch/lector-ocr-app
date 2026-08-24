@@ -4,7 +4,8 @@ import pytesseract
 import io
 import base64
 import os
-
+import json
+# mod por claude 230826
 # RUTA A TESSERACT INSTALADO EN TU PC
 if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
     # Si la ruta de Windows existe, la usamos
@@ -13,6 +14,7 @@ else:
     # En la nube (Linux), Tesseract se instala en el PATH automáticamente,
     # así que no necesitamos asignar una ruta manual.
     pass
+
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="OCR Inteligente Pro", layout="wide")
 
@@ -26,7 +28,7 @@ def process_with_filters(image):
     img = img.filter(ImageFilter.MedianFilter(size=3))
     img = img.point(lambda p: 255 if p > 180 else 0)
     img = img.resize((img.width * 2, img.height * 2), Image.Resampling.LANCZOS)
-    
+
     config = r'--oem 3 --psm 6'
     text = pytesseract.image_to_string(img, lang='spa', config=config)
     return text, img
@@ -54,7 +56,7 @@ if 'all_image_data' not in st.session_state:
 
 if uploaded_files:
     current_file_names = {f.name for f in uploaded_files}
-    
+
     # Reprocesar solo si cambian los archivos
     if not st.session_state.all_image_data or {d['filename'] for d in st.session_state.all_image_data} != current_file_names:
         st.session_state.all_image_data = []
@@ -62,31 +64,41 @@ if uploaded_files:
 
         with st.spinner("Analizando imágenes con doble método para optimizar resultados..."):
             for idx, uploaded_file in enumerate(uploaded_files, start=1):
-                image_bytes = uploaded_file.read()
-                original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                try:
+                    image_bytes = uploaded_file.read()
+                    original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-                # PROCESAR DE AMBAS FORMAS
-                text_enhanced, img_enhanced = process_with_filters(original_image)
-                text_simple, img_simple = process_simple(original_image)
+                    # PROCESAR DE AMBAS FORMAS
+                    text_enhanced, img_enhanced = process_with_filters(original_image)
+                    text_simple, img_simple = process_simple(original_image)
 
-                # LOGICA DE SELECCIÓN: ¿Cuál obtuvo más texto?
-                if len(text_enhanced.strip()) >= len(text_simple.strip()):
-                    final_text = text_enhanced
-                    final_img = img_enhanced
-                    was_enhanced = True
-                else:
-                    final_text = text_simple
-                    final_img = img_simple
-                    was_enhanced = False
+                    # LOGICA DE SELECCIÓN: ¿Cuál obtuvo más texto?
+                    if len(text_enhanced.strip()) >= len(text_simple.strip()):
+                        final_text = text_enhanced
+                        final_img = img_enhanced
+                        was_enhanced = True
+                    else:
+                        final_text = text_simple
+                        final_img = img_simple
+                        was_enhanced = False
 
-                st.session_state.all_image_data.append({
-                    "n": idx,
-                    "filename": uploaded_file.name,
-                    "original_image": original_image, 
-                    "current_text": final_text,
-                    "current_processed_image_b64": image_to_base64(final_img),
-                    "use_enhancement_for_this_row": was_enhanced
-                })
+                    st.session_state.all_image_data.append({
+                        "n": idx,
+                        "filename": uploaded_file.name,
+                        "original_image": original_image,
+                        "current_text": final_text,
+                        "current_processed_image_b64": image_to_base64(final_img),
+                        "use_enhancement_for_this_row": was_enhanced
+                    })
+                except pytesseract.TesseractNotFoundError:
+                    st.error(
+                        "No se encontró Tesseract-OCR. Verificá la instalación (o el paquete "
+                        "de idioma 'spa') antes de continuar."
+                    )
+                    st.stop()
+                except Exception as e:
+                    st.error(f"Error procesando '{uploaded_file.name}': {e}")
+
         st.success("¡Procesamiento inteligente completado!")
 
 # --- FILTRADO ---
@@ -97,7 +109,7 @@ if st.session_state.all_image_data:
 
     # --- TABLA DE RESULTADOS ---
     st.subheader("📊 Resultados de OCR")
-    
+
     # Filtrar datos
     if 'Todas' in selected_n_numbers:
         filtered_results = st.session_state.all_image_data
@@ -118,12 +130,12 @@ if st.session_state.all_image_data:
     def update_manual(idx):
         row = st.session_state.all_image_data[idx]
         new_state = not row['use_enhancement_for_this_row']
-        
+
         if new_state:
             t, img = process_with_filters(row['original_image'])
         else:
             t, img = process_simple(row['original_image'])
-            
+
         st.session_state.all_image_data[idx].update({
             "current_text": t,
             "current_processed_image_b64": image_to_base64(img),
@@ -133,17 +145,17 @@ if st.session_state.all_image_data:
     for res in filtered_results:
         idx_real = res['n'] - 1
         c = st.columns([0.5, 1.5, 3.5, 1.5, 1, 1])
-        
+
         c[0].write(res['n'])
         c[1].write(res['filename'])
         c[2].write(res['current_text'])
         c[3].image(f"data:image/png;base64,{res['current_processed_image_b64']}", use_container_width=True)
-        
+
         # Checkbox manual
-        c[4].checkbox(" ", value=res['use_enhancement_for_this_row'], 
-                     key=f"chk_{idx_real}", 
+        c[4].checkbox(" ", value=res['use_enhancement_for_this_row'],
+                     key=f"chk_{idx_real}",
                      on_change=update_manual, args=(idx_real,))
-        
+
         # Etiqueta de estado
         estado = "✨ Auto-Mejora" if res['use_enhancement_for_this_row'] else "⚡ Simple"
         c[5].info(estado)
@@ -154,32 +166,30 @@ if st.session_state.all_image_data:
 
     # Construir el texto de la tabla para copiar, usando solo los resultados FILTRADOS actualmente visibles.
     table_text_filtered = "N°\tArchivo\tTexto extraído\n"
-    for r in filtered_results: # Usar la lista de resultados ya filtrados.
+    for r in filtered_results:  # Usar la lista de resultados ya filtrados.
         # Reemplazar saltos de línea con espacios para que el texto sea una sola línea en la celda de Excel.
         texto_plano = r['current_text'].replace('\n', ' ').strip()
         table_text_filtered += f"{r['n']}\t{r['filename']}\t{texto_plano}\n"
 
     # Mostrar un área de texto con el contenido de la tabla, que el usuario puede copiar manualmente.
     st.text_area("Tabla para copiar y pegar en Excel", table_text_filtered, height=300)
-    
-    # Agregar un botón para copiar automáticamente el texto de la tabla al portapapeles.
-    # Se usa JavaScript directamente con st.markdown y `unsafe_allow_html=True`.
-    # `navigator.clipboard.writeText` es el método moderno, con un fallback a `document.execCommand('copy')`
-    # para mayor compatibilidad, especialmente en entornos de iframe.
+
+    # Botón para copiar automáticamente el texto de la tabla al portapapeles.
+    # Usamos json.dumps para escapar el texto de forma segura como literal de JS
+    # (evita romper el script si el OCR trae backticks, comillas, ${...}, </script>, etc.)
+    texto_js_seguro = json.dumps(table_text_filtered)
+
     copy_button_js = f"""
     <script>
     function copyToClipboard(text) {{
         navigator.clipboard.writeText(text).then(function() {{
             console.log('Texto copiado al portapapeles exitosamente.');
-            // Podrías añadir un pequeño mensaje de feedback visual al usuario aquí,
-            // por ejemplo, cambiando el texto del botón temporalmente.
         }}, function(err) {{
             console.error('No se pudo copiar el texto usando navigator.clipboard: ', err);
-            // Fallback para navegadores o entornos que no soporten navigator.clipboard.writeText
             var textArea = document.createElement("textarea");
             textArea.value = text;
-            textArea.style.position = "fixed"; // Evita que cause scroll
-            textArea.style.opacity = "0"; // Lo hace invisible
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
             document.body.appendChild(textArea);
             textArea.focus();
             textArea.select();
@@ -194,7 +204,7 @@ if st.session_state.all_image_data:
         }});
     }}
     </script>
-    <button onclick="copyToClipboard(`{table_text_filtered.replace('`', '\\`')}`)" 
+    <button onclick="copyToClipboard({texto_js_seguro})"
             style="padding:10px 20px; font-size:16px; border-radius: 8px; background-color: #4CAF50; color: white; border: none; cursor: pointer; transition: background-color 0.3s ease;">
         📋 Copiar tabla al portapapeles
     </button>
